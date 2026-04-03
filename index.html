@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WordMelody - AI 记忆工具</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Quicksand:wght@500;600;700&display=swap" rel="stylesheet">
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Mammoth.js for Word extraction -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+    <!-- PDF.js for PDF extraction -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
+    <!-- html2canvas for image generation -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script>
+        // Configure Tailwind
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        display: ['Quicksand', 'sans-serif'],
+                    },
+                    colors: {
+                        morandi: {
+                            pink: '#f8d7da',
+                            blue: '#d1ecf1',
+                            green: '#d4edda',
+                            gray: '#f5f5f5',
+                            text: '#4a5568',
+                            primary: '#ef9a9a', // Morandi Pinkish
+                            secondary: '#90caf9', // Morandi Bluish
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #fcfcfc;
+        }
+        .card {
+            background: white;
+            border-radius: 24px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
+        }
+        .btn-morandi-pink {
+            background-color: #fce4ec;
+            color: #d81b60;
+            transition: all 0.3s ease;
+        }
+        .btn-morandi-pink:hover {
+            background-color: #f8bbd0;
+            transform: translateY(-1px);
+        }
+        .btn-morandi-blue {
+            background-color: #e3f2fd;
+            color: #1e88e5;
+            transition: all 0.3s ease;
+        }
+        .btn-morandi-blue:hover {
+            background-color: #bbdefb;
+            transform: translateY(-1px);
+        }
+        .highlight {
+            background-color: #fff9c4;
+            padding: 0 2px;
+            border-radius: 4px;
+            font-weight: 600;
+            color: #f57f17;
+        }
+        .step-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background-color: #e2e8f0;
+            color: #64748b;
+            font-size: 12px;
+            font-weight: 700;
+            margin-right: 8px;
+        }
+        .soft-ring {
+            box-shadow: 0 0 0 4px rgba(244, 114, 182, 0.12);
+        }
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+    </style>
+</head>
+<body class="min-h-screen px-4 py-10 flex flex-col items-center">
+    <div class="fixed inset-0 -z-10 bg-gradient-to-br from-white via-slate-50 to-pink-50"></div>
+    
+    <!-- Toast Notification -->
+    <div id="toast" class="fixed top-6 right-6 transform translate-x-full transition-transform duration-300 z-50 bg-white border border-slate-100 shadow-xl px-6 py-3 rounded-2xl flex items-center gap-3">
+        <div class="text-green-500"><i data-lucide="check-circle-2"></i></div>
+        <span id="toast-message" class="text-slate-700 font-medium"></span>
+    </div>
+
+    <div class="max-w-3xl w-full">
+        <!-- Header -->
+        <header class="text-center mb-16 relative">
+            <div class="inline-block relative">
+                <div class="absolute -inset-1 bg-gradient-to-r from-morandi-primary to-morandi-secondary rounded-full blur opacity-20"></div>
+                <h1 class="relative text-6xl font-display font-bold text-slate-800 tracking-tight mb-4">
+                    WordMelody
+                </h1>
+            </div>
+            <p class="text-xl font-medium text-slate-400 max-w-lg mx-auto leading-relaxed font-sans italic">
+                把记忆化作旋律，让单词在脑海中起舞
+            </p>
+            <div class="mt-6 flex justify-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-morandi-primary/40"></span>
+                <span class="w-2 h-2 rounded-full bg-morandi-secondary/40"></span>
+                <span class="w-2 h-2 rounded-full bg-morandi-primary/40"></span>
+            </div>
+        </header>
+
+        <!-- Main Card -->
+        <main class="card p-6 sm:p-8 space-y-10 border border-slate-100/70 backdrop-blur bg-white/80">
+            
+            <!-- Step 1: Input Section -->
+            <section class="space-y-4">
+                <div class="flex items-center justify-between">
+                    <h2 class="text-xl font-bold text-slate-800 flex items-center">
+                        <span class="step-badge">1</span> 输入或导入单词
+                    </h2>
+                    <div class="flex gap-2">
+                        <label class="cursor-pointer px-4 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2 transition-colors shadow-sm">
+                            <i data-lucide="file-text" class="w-4 h-4"></i> Word
+                            <input type="file" id="word-upload" accept=".doc,.docx" class="hidden">
+                        </label>
+                        <label class="cursor-pointer px-4 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2 transition-colors shadow-sm">
+                            <i data-lucide="file-type-2" class="w-4 h-4"></i> PDF
+                            <input type="file" id="pdf-upload" accept=".pdf" class="hidden">
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="rounded-3xl border border-dashed border-slate-200 bg-slate-50/60 overflow-hidden transition-all focus-within:bg-white focus-within:border-slate-300 focus-within:soft-ring">
+                    <div class="px-5 pt-4 pb-3 flex items-center justify-between gap-4">
+                        <div class="flex items-center gap-2 text-slate-500 text-sm font-medium">
+                            <i data-lucide="wand-2" class="w-4 h-4"></i>
+                            <span>粘贴/输入/拖拽图片</span>
+                        </div>
+                        <div class="hidden sm:flex items-center gap-2 text-xs text-slate-400">
+                            <span class="px-2 py-1 rounded-lg bg-white/70 border border-slate-100">Ctrl+V</span>
+                            <span class="px-2 py-1 rounded-lg bg-white/70 border border-slate-100">Drag</span>
+                        </div>
+                    </div>
+                    <textarea id="word-input" 
+                        placeholder="输入或粘贴多个英文单词，支持逗号、换行或段落分隔..."
+                        class="w-full h-40 px-5 pb-5 bg-transparent border-0 focus:ring-0 text-slate-800 text-lg resize-none transition-all placeholder:text-slate-400"
+                    ></textarea>
+                </div>
+                <div class="text-xs text-slate-500">也可拖拽或粘贴图片到此区域自动识别英文</div>
+            </section>
+
+            <!-- Step 2: Generation Buttons -->
+            <section class="space-y-4">
+                <h2 class="text-xl font-bold text-slate-800 flex items-center">
+                    <span class="step-badge">2</span> 生成歌词或故事
+                </h2>
+                <div class="grid grid-cols-2 gap-4">
+                    <button id="btn-gen-lyrics" class="btn-morandi-pink py-4 px-6 rounded-2xl font-bold text-lg flex items-center justify-center gap-3 shadow-sm">
+                        <i data-lucide="music-2"></i> 生成歌词
+                    </button>
+                    <button id="btn-gen-story" class="btn-morandi-blue py-4 px-6 rounded-2xl font-bold text-lg flex items-center justify-center gap-3 shadow-sm">
+                        <i data-lucide="book-open"></i> 生成故事
+                    </button>
+                </div>
+            </section>
+
+            <!-- Results Area (Hidden by default) -->
+            <section id="result-section" class="hidden space-y-6 pt-6 border-t border-slate-100 animate-in fade-in duration-500">
+                <div class="flex items-center justify-between">
+                    <h3 id="result-title" class="text-lg font-bold text-slate-800">生成结果</h3>
+                    <div class="flex gap-2">
+                        <button id="btn-copy-lyrics" class="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-700 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2 shadow-sm">
+                            <i data-lucide="copy" class="w-4 h-4"></i> 复制内容
+                        </button>
+                        <button id="btn-share-image" class="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-700 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2 shadow-sm">
+                            <i data-lucide="share-2" class="w-4 h-4"></i> 保存图片
+                        </button>
+                        <button id="btn-translate" class="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-700 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2 shadow-sm">
+                            <i data-lucide="languages" class="w-4 h-4"></i> 翻译内容
+                        </button>
+                    </div>
+                </div>
+
+                <div id="result-content" class="space-y-4">
+                    <!-- Bilingual lines will be injected here -->
+                </div>
+
+                <!-- Step 3: Suno Action -->
+                <div class="pt-6 border-t border-slate-100 space-y-4">
+                    <h2 class="text-xl font-bold text-slate-800 flex items-center">
+                        <span class="step-badge">3</span> 点击生成歌曲
+                    </h2>
+                    <div class="space-y-2">
+                        <label for="editable-lyrics" class="text-sm font-semibold text-slate-600">可编辑歌词</label>
+                        <textarea id="editable-lyrics" class="w-full min-h-44 px-4 py-3 rounded-2xl border border-[#A6C8E3]/50 bg-[#F7FBFF] text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#A6C8E3]/40 resize-y"></textarea>
+                    </div>
+                    <button id="btn-to-suno" class="w-full bg-[#F3A6A6] text-slate-800 py-4 px-6 rounded-2xl font-bold text-lg flex items-center justify-center gap-3 hover:bg-[#ec9797] transition-all shadow-lg shadow-[#F3A6A6]/30">
+                        <i data-lucide="play-circle"></i> 生成歌曲
+                    </button>
+                    <p class="text-center text-sm text-slate-400">将使用上方可编辑歌词直接生成歌曲。</p>
+                <!-- Song generation status -->
+                <div id="song-generation-status" class="hidden mt-8 pt-8 border-t border-slate-100">
+                    <div id="song-loading" class="flex-col items-center justify-center py-8 hidden">
+                        <div class="animate-spin rounded-full h-12 w-12 border-4 border-indigo-100 border-t-indigo-500 mb-4"></div>
+                        <p class="text-slate-500 font-medium">正在谱曲，约需30秒...</p>
+                    </div>
+                    
+                    <div id="song-error" class="bg-rose-50 border border-rose-100 p-6 rounded-3xl hidden">
+                        <div class="flex items-center gap-3 text-rose-600 font-bold mb-3">
+                            <i data-lucide="alert-circle" class="w-6 h-6"></i>
+                            <span>歌曲生成失败</span>
+                        </div>
+                        <p id="song-error-msg" class="text-rose-500/80 text-sm mb-6 leading-relaxed">请检查 API 配置或稍后再试。</p>
+                        
+                        <div class="flex flex-col gap-4">
+                            <button id="btn-retry-song" class="w-full py-4 bg-rose-500 hover:bg-rose-600 text-white rounded-2xl font-bold transition-all shadow-lg shadow-rose-200 flex items-center justify-center gap-2">
+                                <i data-lucide="refresh-cw" class="w-5 h-5"></i>
+                                <span>重试生成</span>
+                            </button>
+                            
+                            <div class="relative">
+                                <div class="absolute inset-0 flex items-center" aria-hidden="true">
+                                    <div class="w-full border-t border-rose-200"></div>
+                                </div>
+                                <div class="relative flex justify-center text-sm">
+                                    <span class="px-2 bg-rose-50 text-rose-400">或者手动输入链接</span>
+                                </div>
+                            </div>
+                            
+                            <div class="flex gap-2">
+                                <input type="text" id="manual-audio-url" placeholder="粘贴你在后台看到的音频链接..." class="flex-1 px-4 py-3 bg-white border border-rose-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-rose-500/20">
+                                <button id="btn-use-manual-url" class="px-6 py-3 bg-slate-800 text-white rounded-xl font-bold hover:bg-slate-900 transition-colors text-sm">
+                                    确定
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                        <div id="song-success" class="hidden space-y-3">
+                            <audio id="song-audio" controls class="w-full"></audio>
+                            <a id="song-download" class="inline-flex px-4 py-2 rounded-xl bg-[#A6C8E3]/25 text-[#3b6f9a] font-semibold hover:bg-[#A6C8E3]/35 transition-colors" download>下载歌曲</a>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Footer / Instructions -->
+        <footer class="mt-12 text-center text-slate-400 text-sm">
+            <p>&copy; 2024 WordMelody. All rights reserved.</p>
+        </footer>
+    </div>
+
+    <!-- JavaScript Logic -->
+    <script src="app.js"></script>
+</body>
+</html>

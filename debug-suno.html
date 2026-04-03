@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Debug Suno（本地）</title>
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; background:#fafafa; margin:0; padding:24px; color:#111; }
+    .wrap { max-width: 1000px; margin: 0 auto; }
+    textarea { width: 100%; min-height: 120px; padding: 10px; font-size: 14px; }
+    input, select, button { padding: 8px 10px; font-size: 14px; }
+    button { cursor:pointer; }
+    .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin: 12px 0; }
+    .card { background:white; border:1px solid #eee; border-radius:12px; padding:16px; margin-bottom: 16px; }
+    pre { background:#0b1020; color:#d7e3ff; padding:12px; border-radius:12px; overflow:auto; }
+    audio { width:100%; margin-top: 12px; }
+    .muted { color:#666; font-size: 12px; }
+    .status { font-weight:600; }
+    .err { color:#b00020; font-weight:600; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1 style="margin:0 0 12px;">Debug Suno（本地页面）</h1>
+    <div class="muted">用于排查：task_id 轮询是否能拿到真实 audio_url 并播放。</div>
+
+    <div class="card">
+      <div class="row">
+        <div style="flex:1; min-width:320px;">
+          <div class="muted">歌词（会作为 Suno prompt 使用）</div>
+          <textarea id="lyrics" placeholder="在这里粘贴你的歌词/文本"></textarea>
+        </div>
+        <div style="min-width: 240px;">
+          <div class="muted">风格 tags</div>
+          <select id="style">
+            <option value="pop" selected>pop</option>
+            <option value="rock">rock</option>
+            <option value="lofi">lofi</option>
+            <option value="rap">rap</option>
+          </select>
+          <div style="height:12px"></div>
+          <div class="muted">轮询间隔/超时</div>
+          <div class="row" style="margin:8px 0 0;">
+            <span class="muted">轮询间隔：</span>
+            <input id="intervalMs" type="number" value="3000" style="width:110px"/>
+          </div>
+          <div class="row" style="margin:6px 0 0;">
+            <span class="muted">总时长：</span>
+            <input id="maxWaitMs" type="number" value="200000" style="width:110px"/>
+            <span class="muted">ms</span>
+          </div>
+          <div style="height:14px"></div>
+          <button id="btnGenerate" style="background:#f3a6a6;border:0;border-radius:10px;font-weight:700;">生成歌曲</button>
+          <button id="btnReset" style="background:#e5e7eb;border:0;border-radius:10px;font-weight:700;">清空</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="margin-top:0;">
+        <div>当前状态：<span id="uiStatus" class="status">idle</span></div>
+      </div>
+      <div class="row">
+        <div style="flex:1; min-width:320px;">
+          <div class="muted">后端/轮询返回（原始 JSON）</div>
+          <pre id="log">等待操作...</pre>
+        </div>
+      </div>
+
+      <div class="row">
+        <div style="flex:1; min-width:320px;">
+          <div class="muted">audio_url</div>
+          <div id="audioUrl" style="word-break:break-all; margin-top:6px;"></div>
+          <audio id="audio" controls></audio>
+        </div>
+      </div>
+      <div id="errorBox" class="err" style="display:none; margin-top:10px;"></div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    const uiStatus = $("uiStatus");
+    const logEl = $("log");
+    const errorBox = $("errorBox");
+    const lyricsEl = $("lyrics");
+    const styleEl = $("style");
+    const intervalMsEl = $("intervalMs");
+    const maxWaitMsEl = $("maxWaitMs");
+    const audioUrlEl = $("audioUrl");
+    const audioEl = $("audio");
+
+    const appendLog = (obj) => {
+      const line = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
+      logEl.textContent = line;
+    };
+
+    function setError(msg) {
+      errorBox.style.display = "block";
+      errorBox.textContent = msg;
+    }
+
+    function clearError() {
+      errorBox.style.display = "none";
+      errorBox.textContent = "";
+    }
+
+    function setAudio(url) {
+      audioUrlEl.textContent = url || "";
+      if (url) {
+        audioEl.src = url;
+        audioEl.load();
+      } else {
+        audioEl.removeAttribute("src");
+      }
+    }
+
+    async function fetchWithTimeout(url, options = {}, timeoutMs = 60000) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        return await fetch(url, { ...options, signal: controller.signal });
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    function isSuccessStatus(status) {
+      const s = String(status || '').toLowerCase();
+      return ["success", "completed", "done", "finished"].includes(s) || s.includes("complete") || s.includes("finish");
+    }
+
+    function isFailureStatus(status) {
+      const s = String(status || '').toLowerCase();
+      return ["failed", "error", "cancelled", "canceled"].includes(s) || s.includes("fail");
+    }
+
+    async function poll(taskId) {
+      const intervalMs = Math.max(500, Number(intervalMsEl.value || 3000));
+      const maxWaitMs = Math.max(10000, Number(maxWaitMsEl.value || 200000));
+      const deadline = Date.now() + maxWaitMs;
+
+      while (Date.now() < deadline) {
+        const resp = await fetchWithTimeout(`/api/song-status/${encodeURIComponent(taskId)}`, {}, 60000);
+        const data = await resp.json();
+        appendLog({ poll: true, statusCode: resp.status, data });
+
+        const status = data.status;
+        const audioUrl = data.audio_url || data.audioUrl;
+
+        uiStatus.textContent = status || "pending";
+
+        if (audioUrl && isSuccessStatus(status)) return audioUrl;
+        if (audioUrl && (String(status || '').toLowerCase().includes("complete") || String(status || '').toLowerCase().includes("finish"))) return audioUrl;
+        if (isFailureStatus(status)) throw new Error(data.error || "歌曲生成失败");
+
+        await new Promise(r => setTimeout(r, intervalMs));
+      }
+
+      throw new Error("轮询超时，请重试");
+    }
+
+    $("btnReset").addEventListener("click", () => {
+      uiStatus.textContent = "idle";
+      appendLog("等待操作...");
+      clearError();
+      setAudio("");
+      lyricsEl.value = "";
+    });
+
+    $("btnGenerate").addEventListener("click", async () => {
+      clearError();
+      setAudio("");
+
+      const lyrics = (lyricsEl.value || "").trim();
+      const style = styleEl.value || "pop";
+      if (!lyrics) {
+        setError("请先填写歌词/文本");
+        return;
+      }
+
+      try {
+        uiStatus.textContent = "generating";
+        appendLog({ request: { lyricsPreview: lyrics.slice(0, 80), style } });
+
+        const resp = await fetchWithTimeout(
+          "/api/generate-song",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ lyrics, style })
+          },
+          160000
+        );
+
+        const data = await resp.json();
+        appendLog({ generate: true, statusCode: resp.status, data });
+
+        if (!resp.ok) throw new Error(data.error || `generate-song failed (${resp.status})`);
+
+        const audioUrl = data.audio_url || data.audioUrl;
+        if (audioUrl) {
+          uiStatus.textContent = data.status || "success";
+          setAudio(audioUrl);
+          return;
+        }
+
+        const taskId = data.task_id || data.taskId;
+        if (!taskId) throw new Error(data.error || "未拿到 task_id");
+
+        uiStatus.textContent = data.status || "pending";
+        const finalUrl = await poll(taskId);
+        uiStatus.textContent = "success";
+        setAudio(finalUrl);
+      } catch (e) {
+        setError(e?.message || String(e));
+        uiStatus.textContent = "error";
+      }
+    });
+  </script>
+</body>
+</html>
+

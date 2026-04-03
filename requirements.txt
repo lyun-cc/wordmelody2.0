@@ -1,0 +1,7 @@
+# WordMelody Project Dependencies
+# This project primarily uses Python standard library
+# No external package dependencies required
+
+# Optional: If you need to use specific versions of standard library modules
+# (though they come built-in with Python)
+# python>=3.8

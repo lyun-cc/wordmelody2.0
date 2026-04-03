@@ -1,0 +1,13 @@
+{
+  "cleanUrls": true,
+  "rewrites": [
+    {
+      "source": "/api/generate-song",
+      "destination": "/api/generate-song.py"
+    },
+    {
+      "source": "/api/song-status/:task_id",
+      "destination": "/api/song-status/[task_id].py"
+    }
+  ]
+}
